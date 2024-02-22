@@ -1,5 +1,6 @@
 import os
 import time
+from random import randint
 from threading import Thread
 from typing import Callable
 
@@ -10,6 +11,15 @@ from psycopg2.pool import ThreadedConnectionPool, AbstractConnectionPool
 
 N = 10_000
 THREADS_NUM = 10
+IS_RANDOM = True
+ROWS_NUM = 10_000
+
+
+def generate_row_num() -> int:
+    if (not IS_RANDOM) or (randint(0, 1) == 0):
+        return 1
+    else:
+        return randint(2, ROWS_NUM)
 
 
 def create_pool() -> ThreadedConnectionPool:
@@ -33,7 +43,7 @@ def create_pool() -> ThreadedConnectionPool:
 
 def set_default_values(conn: Connection) -> None:
     cursor = conn.cursor()
-    cursor.execute('''UPDATE user_counter SET counter = 0, version = 0 WHERE user_id = 1''')
+    cursor.execute('''UPDATE user_counter SET counter = 0, version = 0''')
     conn.commit()
 
 
@@ -55,42 +65,46 @@ def execute_threads(thread_function: Callable[[Connection, Cursor], None], pool:
         pool.putconn(conn)
 
     end = time.time()
-    print(f'Total time taken for {thread_function.__name__}: {end - start}')
+    print(f'Total time taken for {thread_function.__name__}: {round(end - start, 2)}')
 
 
 def lost_update(conn: Connection, cursor: Cursor) -> None:
     for _ in range(N):
-        cursor.execute('''SELECT counter FROM user_counter WHERE user_id = 1''')
+        row = generate_row_num()
+        cursor.execute(f'''SELECT counter FROM user_counter WHERE row = {row}''')
         counter = cursor.fetchone()[0]
         counter = counter + 1
-        cursor.execute(f'''UPDATE user_counter SET counter = {counter} WHERE user_id = 1''')
+        cursor.execute(f'''UPDATE user_counter SET counter = {counter} WHERE row = {row}''')
         conn.commit()
 
 
 def inplace_update(conn: Connection, cursor: Cursor) -> None:
     for _ in range(N):
-        cursor.execute('''UPDATE user_counter SET counter = counter + 1 WHERE user_id = 1''')
+        row = generate_row_num()
+        cursor.execute(f'''UPDATE user_counter SET counter = counter + 1 WHERE row = {row}''')
         conn.commit()
 
 
 def row_level_locking(conn: Connection, cursor: Cursor) -> None:
     for _ in range(N):
-        cursor.execute('''SELECT counter FROM user_counter WHERE user_id = 1 FOR UPDATE''')
+        row = generate_row_num()
+        cursor.execute(f'''SELECT counter FROM user_counter WHERE row = {row} FOR UPDATE''')
         counter = cursor.fetchone()[0]
         counter = counter + 1
-        cursor.execute(f'''UPDATE user_counter SET counter = {counter} WHERE user_id = 1''')
+        cursor.execute(f'''UPDATE user_counter SET counter = {counter} WHERE row = {row}''')
         conn.commit()
 
 
 def optimistic_concurrency_control(conn: Connection, cursor: Cursor) -> None:
     for _ in range(N):
+        row = generate_row_num()
         while True:
-            cursor.execute('''SELECT counter, version FROM user_counter WHERE user_id = 1''')
+            cursor.execute(f'''SELECT counter, version FROM user_counter WHERE row = {row}''')
             counter, version = cursor.fetchone()
             counter = counter + 1
             cursor.execute(
                 f'''UPDATE user_counter SET counter = {counter}, version = {version + 1} 
-                WHERE user_id = 1 AND version = {version}'''
+                WHERE row = {row} AND version = {version}'''
             )
             conn.commit()
 
